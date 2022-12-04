@@ -140,3 +140,150 @@ orci_plot
 ```
 
 Based on the plot, we can see that New York has the lowest adjusted odds ratio and Albuquerque has the highest adjusted odds ratio. Meanwhile, most of adjusted odds ratios are below 1, which indicates that the odds of having a resolved homicide among male victims is lower than the odds of having a resolved homicide among female victims in those cities. Except a few cities have much higher adjusted odds ratios, their CIs also have a much wider range than others'.
+
+
+## Problem 3
+
+Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+
+```{r}
+bw_df = read_csv("./data/birthweight.csv")
+
+bw_tidy = 
+  bw_df %>% 
+  mutate(babysex = as.factor(babysex),
+         frace = as.factor(frace),
+         malform = as.factor(malform),
+         mrace = as.factor(mrace)) 
+
+sum(is.na(bw_tidy))
+```
+
+No missing data in the dataset.
+
+
+Propose a regression model for birthweight.
+
+First, test for relationship between birthweight and possibly related variables.
+
+```{r}
+plot(x = bw_tidy$bhead, y = bw_tidy$bwt)
+plot(x = bw_tidy$blength, y = bw_tidy$bwt)
+plot(x = bw_tidy$delwt, y = bw_tidy$bwt)
+plot(x = bw_tidy$fincome, y = bw_tidy$bwt)
+plot(x = bw_tidy$gaweeks, y = bw_tidy$bwt)
+plot(x = bw_tidy$ppwt, y = bw_tidy$bwt)
+plot(x = bw_tidy$wtgain, y = bw_tidy$bwt)
+
+bw_tidy %>%
+  group_by(babysex) %>%
+  ggplot(aes(x = bwt, color = babysex)) +
+  geom_density() +
+  labs(title = "density plot of bwt by baby's sex")
+
+bw_tidy %>%
+  group_by(mrace) %>%
+  ggplot(aes(x = bwt, color = mrace)) +
+  geom_density() +
+  labs(title = "density plot of bwt by mother's race")
+
+bw_tidy %>%
+  group_by(frace) %>%
+  ggplot(aes(x = bwt, color = frace)) +
+  geom_density() +
+  labs(title = "density plot of bwt by father's race")
+
+bw_tidy %>%
+  group_by(malform) %>%
+  ggplot(aes(x = bwt, color = malform)) +
+  geom_density() +
+  labs(title = "density plot of bwt by presence of malformations")
+
+```
+
+Based on the plots, we can see that baby’s head circumference at birth and baby’s length at birth seem to have linear relationships with baby's birth weight. 
+
+```{r}
+m1 = lm(bwt ~ bhead + blength, data = bw_tidy)
+
+m1_results = 
+  bw_tidy %>% 
+  select(bwt, bhead, blength) %>%
+  modelr::add_predictions(m1) %>%
+  modelr::add_residuals(m1)
+
+plot_bwt_bhead =
+  m1_results %>%
+  ggplot(aes(x = bhead, y =  resid)) +
+  geom_violin() 
+
+plot_bwt_bhead
+
+plot_bwt_blength = 
+  m1_results %>%
+  ggplot(aes(x = blength, y =  resid)) +
+  geom_violin() 
+
+plot_bwt_blength
+```
+
+The residual plots show that 1. baby’s head circumference at birth on x and residual on y; 2. baby’s length at birth on x and residual on y.
+
+
+Compare your model to two others:
+
+Model 2: One using length at birth and gestational age as predictors (main effects only)
+
+```{r}
+m2 = 
+  lm(bwt ~ blength + gaweeks, data = bw_tidy) %>%
+  broom::tidy()
+
+m2
+```
+
+Model 3: One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+
+```{r}
+m3 = 
+  lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = bw_tidy) %>%
+  broom::tidy()
+
+m3
+```
+
+Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+
+```{r}
+bw_cv = 
+  crossv_mc(bw_tidy, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)) %>% 
+  mutate(
+    m1_cv = map(train, ~lm(bwt ~ wtgain, data = .x)),
+    m2_cv = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    m3_cv = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = .x))) %>% 
+  mutate(
+    rmse_m1 = map2_dbl(m1_cv, test, ~rmse(model = .x, data = .y)),
+    rmse_m2 = map2_dbl(m2_cv, test, ~rmse(model = .x, data = .y)), 
+    rmse_m3 = map2_dbl(m3_cv, test, ~rmse(model = .x, data = .y)))
+
+bw_cv_plot = 
+  bw_cv %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(everything(), 
+               names_to = "model",
+               values_to = "rmse",
+               names_prefix = "rmse_") %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+
+bw_cv_plot
+```
+
+From the violin plot above, we can see that model 1 has the largest rmse among all three models while model 3 has the smallest rmse. This means that the model 3 is the best among all the three models. 
+
+
+
+
+
