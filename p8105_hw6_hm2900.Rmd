@@ -12,7 +12,7 @@ knitr::opts_chunk$set(
   echo = TRUE,
   warning = FALSE,
   fig.width = 8,
-  fig.asp = 6,
+  fig.height = 6,
   out.width = "90%"
 )
 
@@ -27,4 +27,116 @@ scale_colour_discrete = scale_color_viridis_d
 scale_fill_discrete = scale_fill_viridis_d
 ```
 
+## Problem 1
 
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+```{r}
+weather_df %>% 
+  modelr::bootstrap(n = 1000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::glance)) %>% 
+  select(-strap, -models) %>% 
+  unnest(results) %>% 
+  ggplot(aes(x = r.squared)) + geom_density()
+```
+
+```{r}
+weather_df %>% 
+  modelr::bootstrap(n = 1000) %>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::tidy)) %>% 
+  select(-strap, -models) %>% 
+  unnest(results) %>% 
+  select(id = `.id`, term, estimate) %>% 
+  pivot_wider(
+    names_from = term, 
+    values_from = estimate) %>% 
+  rename(beta0 = `(Intercept)`, beta1 = tmin) %>% 
+  mutate(log_b0b1 = log(beta0 * beta1)) %>% 
+  ggplot(aes(x = log_b0b1)) + geom_density()
+```
+
+## Problem 2
+
+Load the dataset
+
+```{r message=FALSE}
+homicides_df = read_csv("./data/homicide-data.csv")
+
+homicides_new = 
+  homicides_df %>% 
+  janitor::clean_names() %>% 
+  mutate(city_state = str_c(city, state, sep = "_")) %>% 
+  filter(!city_state %in% c("Dallas_TX", "Phoenix_AZ", "Kansas City_MO", "Tulsa_AL"), victim_race %in% c("Black", "White")) %>% 
+  mutate(
+    victim_age = as.numeric(victim_age),
+    resolved = as.numeric(disposition == "Closed by arrest"),
+    victim_race = fct_relevel(victim_race, "White"),
+    victim_sex = fct_relevel(victim_sex, "Female"))
+```
+
+For the city of Baltimore, MD, use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors.
+
+```{r}
+baltimore_glm = 
+  homicides_new %>% 
+  filter(city_state == "Baltimore_MD") %>% 
+  glm(resolved ~ victim_age + victim_sex + victim_race, family = binomial(), data = .) %>% 
+  broom::tidy()
+
+baltimore_glm
+```
+
+Now run glm for each of the cities in your dataset, and extract the adjusted odds ratio (and CI) for solving homicides comparing male victims to female victims. 
+
+```{r}
+all_glm = 
+  homicides_new %>% 
+  nest(all_cities = -city_state) %>%
+  mutate(
+    models = map(.x = all_cities, ~glm(resolved ~ victim_age + victim_sex + victim_race, family = binomial(), data = .)),
+    results = map(models, broom::tidy)) %>% 
+  select(-models, -all_cities) %>% 
+  unnest(cols = results) %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)) %>% 
+  filter(term == "victim_sexMale") %>% 
+  select(city_state, OR, CI_lower, CI_upper)
+
+all_glm %>% 
+  knitr::kable(digits = 3)
+```
+
+Create a plot that shows the estimated ORs and CIs for each city. Organize cities according to estimated OR, and comment on the plot.
+
+```{r}
+orci_plot = 
+  all_glm %>% 
+  mutate(city_state = fct_reorder(city_state, OR)) %>% 
+  ggplot(aes(x = city_state, y = OR)) +
+  geom_point() +
+  ylim(0, 4) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+orci_plot
+```
+
+Based on the plot, we can see that New York has the lowest adjusted odds ratio and Albuquerque has the highest adjusted odds ratio. Meanwhile, most of adjusted odds ratios are below 1, which indicates that the odds of having a resolved homicide among male victims is lower than the odds of having a resolved homicide among female victims in those cities. Except a few cities have much higher adjusted odds ratios, their CIs also have a much wider range than others'.
